@@ -1,6 +1,7 @@
 // 导入所需的依赖
 import { ICONS } from './icons.js';
 
+
 // 设置管理器类
 class SettingsManager {
   constructor() {
@@ -15,7 +16,14 @@ class SettingsManager {
     this.enableFloatingBallCheckbox = document.getElementById('enable-floating-ball');
     this.enableQuickLinksCheckbox = document.getElementById('enable-quick-links');
     this.openInNewTabCheckbox = document.getElementById('open-in-new-tab');
-    
+
+    /* --- Time-based theme helpers --- */
+
+    // Module-level timer id so we can cancel when switching modes
+    this.__themeTimeModeTimerId = null;
+    // Defaults: dark between 20:00 and 07:00
+    this.THEME_TIME_DEFAULTS = { darkStartHour: 20, darkEndHour: 7 }
+
     // 侧边栏模式下的链接打开方式设置元素可能不存在于所有页面
     // 添加安全检查，避免在元素不存在时出错
     const sidepanelOpenInNewTab = document.getElementById('sidepanel-open-in-new-tab');
@@ -283,6 +291,254 @@ class SettingsManager {
     }
   }
 
+/* --- Time-based theme helpers --- */
+
+  // Read configured hours from localStorage (stored as JSON under 'themeTimeRange')
+  getTimeModeHours() {
+    const raw = localStorage.getItem('themeTimeRange');
+    if (!raw) return { ...this.THEME_TIME_DEFAULTS };
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        darkStartHour: Number(parsed.darkStartHour ?? this.THEME_TIME_DEFAULTS.darkStartHour),
+        darkEndHour: Number(parsed.darkEndHour ?? this.THEME_TIME_DEFAULTS.darkEndHour)
+      };
+    } catch (e) {
+      return { ...this.THEME_TIME_DEFAULTS };
+    }
+  }
+
+  // Determine whether it's dark based on a Date and a time range (handles wrap-around)
+  isDarkByTime(now = new Date(), darkStartHour = this.THEME_TIME_DEFAULTS.darkStartHour, darkEndHour = this.THEME_TIME_DEFAULTS.darkEndHour) {
+    const h = now.getHours();
+    if (darkStartHour === darkEndHour) return true; // treat identical as always dark
+    if (darkStartHour < darkEndHour) {
+      return h >= darkStartHour && h < darkEndHour;
+    } else {
+      // wrap-around, e.g., 20 -> 7
+      return h >= darkStartHour || h < darkEndHour;
+    }
+  }
+
+  // Milliseconds until the next boundary (either start or end hour)
+  msUntilNextBoundary(now = new Date(), darkStartHour = this.THEME_TIME_DEFAULTS.darkStartHour, darkEndHour = this.THEME_TIME_DEFAULTS.darkEndHour) {
+    function futureMillisForHour(base, hour) {
+      const boundary = new Date(base);
+      boundary.setHours(hour, 0, 0, 0);
+      if (boundary.getTime() <= base.getTime()) boundary.setDate(boundary.getDate() + 1);
+      return boundary.getTime();
+    }
+
+    const startMs = futureMillisForHour(now, darkStartHour);
+    const endMs = futureMillisForHour(now, darkEndHour);
+    const next = Math.min(startMs, endMs);
+    return Math.max(0, next - now.getTime());
+  }
+
+  clearThemeTimeTimer() {
+    if (this.themeTimeTimerId) {
+      clearTimeout(this.themeTimeTimerId);
+      this.themeTimeTimerId = null;
+    }
+  }
+
+  // Apply theme according to the configured time range and schedule the next flip
+  setThemeBasedOnTime() {
+    const { darkStartHour, darkEndHour } = this.getTimeModeHours();
+    const now = new Date();
+    const shouldDark = this.isDarkByTime(now, darkStartHour, darkEndHour);
+    const theme = shouldDark ? 'dark' : 'light';
+
+    document.documentElement.setAttribute('data-theme', theme);
+    // Keep 'theme' localStorage as 'time' so UI shows the selected mode
+    if (typeof this.updateThemeIcon === 'function') {
+      this.updateThemeIcon(shouldDark);
+    }
+
+    // schedule next boundary
+    this.clearThemeTimeTimer();
+    const delay = this.msUntilNextBoundary(now, darkStartHour, darkEndHour) + 50;
+    this.themeTimeTimerId = setTimeout(() => {
+      try {
+        this.setThemeBasedOnTime();
+      } catch (err) {
+        console.error('Error in scheduled time-based theme update', err);
+      }
+    }, delay);
+  }
+
+  // Replace or augment the existing initTheme() method with this version to support "time" mode.
+  initTheme() {
+    const themeSelect = document.getElementById('theme-select');
+    const savedTheme = localStorage.getItem('theme') || 'auto';
+
+    // set select initial value
+    if (themeSelect) themeSelect.value = savedTheme;
+
+    // Ensure any previous time-based timer is cleared
+    this.clearThemeTimeTimer();
+
+    if (savedTheme === 'time') {
+      // start time-driven theme
+      this.setThemeBasedOnTime();
+    } else if (savedTheme === 'auto') {
+      // follow system
+      this.setThemeBasedOnSystem();
+    } else {
+      // explicit
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      this.updateThemeIcon && this.updateThemeIcon(savedTheme === 'dark');
+    }
+
+    // Listen for system theme changes (only affects 'auto' mode)
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const systemListener = (e) => {
+      if (localStorage.getItem('theme') === 'auto') {
+        const isDark = e.matches;
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        if (typeof this.updateThemeIcon === 'function') this.updateThemeIcon(isDark);
+      }
+    };
+    if (mq && mq.addEventListener) mq.addEventListener('change', systemListener);
+    else if (mq && mq.addListener) mq.addListener(systemListener);
+
+    // Listen to select changes
+    if (themeSelect) {
+      themeSelect.addEventListener('change', (e) => {
+        const selectedTheme = e.target.value;
+        localStorage.setItem('theme', selectedTheme);
+
+        // clear time timer if switching away
+        if (selectedTheme !== 'time') this.clearThemeTimeTimer();
+
+        if (selectedTheme === 'auto') {
+          this.setThemeBasedOnSystem();
+        } else if (selectedTheme === 'time') {
+          this.setThemeBasedOnTime();
+        } else {
+          document.documentElement.setAttribute('data-theme', selectedTheme);
+          if (typeof this.updateThemeIcon === 'function') this.updateThemeIcon(selectedTheme === 'dark');
+        }
+      });
+    }
+
+    // keep toggle button behavior: clicking flips explicit light/dark and stores it (cancels time/auto)
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    if (themeToggleBtn) {
+      themeToggleBtn.addEventListener('click', () => {
+        const currentMode = localStorage.getItem('theme') || savedTheme;
+        const effectiveTheme = document.documentElement.getAttribute('data-theme') ||
+          (currentMode === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+           : (currentMode === 'time' ? (this.isDarkByTime() ? 'dark' : 'light') : currentMode));
+        const next = effectiveTheme === 'dark' ? 'light' : 'dark';
+
+        // set explicit mode (stop time/auto)
+        localStorage.setItem('theme', next);
+        this.clearThemeTimeTimer();
+        document.documentElement.setAttribute('data-theme', next);
+        if (typeof this.updateThemeIcon === 'function') this.updateThemeIcon(next === 'dark');
+
+        if (themeSelect) themeSelect.value = next;
+      });
+    }
+
+    // Initialize time-range UI wiring (if present)
+    this.initTimeRangeUI();
+  }
+
+  // --- Time-range settings UI methods ---
+  initTimeRangeUI() {
+    // Elements kept identical across main settings and sidepanel; only run when elements exist
+    const startInput = document.getElementById('dark-start-hour');
+    const endInput = document.getElementById('dark-end-hour');
+    const saveBtn = document.getElementById('save-time-range');
+    const msgEl = document.getElementById('time-range-message');
+
+    const STORAGE_KEY = 'themeTimeRange';
+
+    const readSavedRange = () => {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw);
+        return {
+          darkStartHour: Number(parsed.darkStartHour ?? this.THEME_TIME_DEFAULTS.darkStartHour),
+          darkEndHour: Number(parsed.darkEndHour ?? this.THEME_TIME_DEFAULTS.darkEndHour)
+        };
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const applySavedToUI = () => {
+      if (!startInput || !endInput) return;
+      const saved = readSavedRange();
+      if (saved) {
+        startInput.value = saved.darkStartHour;
+        endInput.value = saved.darkEndHour;
+      } else {
+        startInput.value = this.THEME_TIME_DEFAULTS.darkStartHour;
+        endInput.value = this.THEME_TIME_DEFAULTS.darkEndHour;
+      }
+    };
+
+    const validateHour = (h) => {
+      if (h === '' || h === null || h === undefined) return false;
+      const n = Number(h);
+      return Number.isInteger(n) && n >= 0 && n <= 23;
+    };
+
+    const showMessage = (txt, isError = false) => {
+      if (!msgEl) return;
+      msgEl.textContent = txt;
+      msgEl.style.color = isError ? '#dc2626' : '#10b981';
+      setTimeout(() => {
+        if (msgEl) msgEl.textContent = '';
+      }, 3000);
+    };
+
+    const onSave = (ev) => {
+      ev && ev.preventDefault();
+      if (!startInput || !endInput) return;
+      const s = startInput.value;
+      const e = endInput.value;
+      if (!validateHour(s) || !validateHour(e)) {
+        showMessage('Please enter integer hours between 0 and 23.', true);
+        return;
+      }
+      const payload = { darkStartHour: Number(s), darkEndHour: Number(e) };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      showMessage('Saved', false);
+
+      // If currently in 'time' mode, re-evaluate immediately
+      if (localStorage.getItem('theme') === 'time') {
+        try {
+          this.clearThemeTimeTimer();
+          this.setThemeBasedOnTime();
+        } catch (err) {
+          console.error('Error applying time-range after save', err);
+        }
+      }
+    };
+
+    // wire up events
+    // If UI elements don't exist, nothing is bound (safe)
+    if (startInput && endInput) {
+      applySavedToUI();
+
+      // save on click
+      if (saveBtn) saveBtn.addEventListener('click', onSave);
+
+      // save on Enter
+      [startInput, endInput].forEach((el) => {
+        el.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') onSave(ev);
+        });
+      });
+    }
+  }
+
+/*
   initTheme() {
     const themeSelect = document.getElementById('theme-select');
     const savedTheme = localStorage.getItem('theme') || 'auto';
@@ -335,6 +591,7 @@ class SettingsManager {
       });
     }
   }
+*/
 
   setThemeBasedOnSystem() {
     const isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;

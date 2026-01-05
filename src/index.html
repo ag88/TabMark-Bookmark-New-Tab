@@ -210,9 +210,28 @@
                 <option value="light" data-i18n="lightTheme">浅色</option>
                 <option value="dark" data-i18n="darkTheme">深色</option>
                 <option value="auto" data-i18n="autoTheme">跟随系统</option>
-		<option value="time" data-i18n="timeTheme">按时间切换 (夜晚暗色)</option>
+                <option value="time" data-i18n="timeTheme">按时间切换 (夜晚暗色)</option>
               </select>
             </div>
+            <div id="time-theme-settings" class="settings-section" style="margin-top: 12px;">
+                <h4 class="settings-section-title" data-i18n="Time-based Theme Range">Time-based Theme Range</h4>
+                <p class="settings-description" data-i18n="Set the hours when dark theme should be active (24h).">Set the hours when dark theme should be active (24h).</p>
+
+                <div class="time-range-inputs" style="display:flex; gap:8px; align-items:center;">
+                    <label for="dark-start-hour" style="display:flex; gap:6px; align-items:center;">
+                    <span data-i18n="Dark Start">Dark start</span>
+                    <input id="dark-start-hour" type="number" min="0" max="23" step="1" style="width:72px; padding:4px;" />
+                    <span>:00</span>
+                    </label>
+                    <label for="dark-end-hour" style="display:flex; gap:6px; align-items:center;">
+                    <span data-i18n="Dark end">Dark end</span>
+                    <input id="dark-end-hour" type="number" min="0" max="23" step="1" style="width:72px; padding:4px;" />
+                    <span>:00</span>
+                    </label>
+                    <button id="save-time-range" class="small-button" style="margin-left:8px; padding:6px 10px;">Save</button>
+                </div>
+                <div id="time-range-message" style="margin-top:8px; color:#6b7280; font-size:13px;"></div>
+            </div>        
             
             <h4 class="settings-section-title" data-i18n="solidBackgroundTitle">纯色背景</h4>
             <div class="settings-background-options">

@@ -6403,5 +6403,53 @@ document.addEventListener('DOMContentLoaded', function() {
   startPeriodicSync();
 });
 
+// Theme helper API & button wiring
+// Robust theme toggle handler using event delegation.
+// Put this near the end of src/script.js (or in a file loaded on the main page).
+(function () {
+  // Ensure toggle and set helpers exist (your earlier helpers)
+  const setTheme = window.setTheme || function (theme) {
+    if (!theme) return;
+    if (theme === 'auto') {
+      localStorage.setItem('theme', 'auto');
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+      if (typeof updateThemeIcon === 'function') updateThemeIcon(isDark);
+      const sel = document.getElementById('theme-select');
+      if (sel) sel.value = 'auto';
+      return;
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+    if (typeof updateThemeIcon === 'function') updateThemeIcon(theme === 'dark');
+    const sel = document.getElementById('theme-select');
+    if (sel) sel.value = theme;
+  };
 
+  const toggleTheme = window.toggleTheme || function () {
+    const stored = localStorage.getItem('theme');
+    const current = document.documentElement.getAttribute('data-theme') ||
+      (stored === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : (stored || 'light'));
+    const next = current === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+  };
 
+  // Expose in case other code wants to call them
+  window.setTheme = setTheme;
+  window.toggleTheme = toggleTheme;
+
+  // Delegated click listener: handles element appearing later / innerHTML changes
+  document.addEventListener('click', function (ev) {
+    // Match by id or class so you can use either one
+    const btn = ev.target.closest('#theme-toggle-btn, .theme-toggle');
+    if (!btn) return;
+
+    // If the button is inside an iframe or shadowRoot, this won't match — confirm earlier.
+    ev.preventDefault();
+    try {
+      toggleTheme();
+    } catch (err) {
+      console.error('Error toggling theme:', err);
+    }
+  }, false);
+})();
